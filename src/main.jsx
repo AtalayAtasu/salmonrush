@@ -67,7 +67,13 @@ function OceanAnimation() {
     // ── scene objects (positions stored as fractions so they survive resizes) ──
     const clouds = Array.from({length:6},(_,i)=>({ xf:i/6+rnd(0,0.1), yf:rnd(0,1), sp:rnd(0.003,0.007) }));
     const gulls  = Array.from({length:5},()=>({ xf:R(), yf:rnd(0.2,0.5), sp:rnd(0.012,0.022)*(R()<0.5?-1:1), ph:rnd(0,TAU), s:rnd(5,9) }));
-    const boats  = [0.1,0.44,0.8].map((xf,i)=>({ xf, dir:i%2?-1:1, sp:rnd(0.004,0.007), sc:[0.95,0.72,1.05][i], ph:rnd(0,TAU) }));
+    // salmon gear: a purse seiner (deep encircling net + skiff) and a gillnetter (shallow drift net); a distant seiner on the horizon
+    const boats  = [
+      { kind:'seiner', xf:0.42, dir:-1, sp:0.0035, sc:0.42, ph:rnd(0,TAU), far:true },
+      { kind:'seiner', xf:0.33, dir:1,  sp:0.0035, sc:1,    ph:rnd(0,TAU), net:{ len:2.6, depth:120 } },
+      { kind:'gill',   xf:0.7,  dir:-1, sp:0.005,  sc:0.85, ph:rnd(0,TAU), net:{ len:2.4, depth:58 } },
+    ];
+    const HULL = { seiner:{ len:120, stern:58 }, gill:{ len:92, stern:45 } };
     const kelp   = Array.from({length:18},(_,i)=>{ const xf=(i+R()*0.8)/18; return { xf, h:rnd(0.16,0.34), ph:rnd(0,TAU), lean:rnd(-0.6,0.6), front:(xf<0.2||xf>0.8)&&R()<0.55 }; });
     const FISH = { back:'#24455a', flank:'#8aabb4', belly:'#eef1ea', belly2:'#c9d6d3', band:'#e07f86', fin:'#4c6d7c', spot:'#132a36', gill:'#3b5a66', eye:'#e9d9a8' };
     const fishCols = z => { const o={}; for (const key in FISH) o[key]=mix(FISH[key], C.water, (1-z)*0.72); return o; };
@@ -78,7 +84,9 @@ function OceanAnimation() {
     const motes  = Array.from({length:70},()=>({ xf:R(), yf:R(), r:rnd(0.6,1.8), ph:rnd(0,TAU), sp:rnd(0.004,0.012) }));
     const glints = Array.from({length:48},()=>({ u:rnd(-1,1), dy:rnd(1,9), ph:rnd(0,TAU), len:rnd(4,14) }));
     const leaps=[], drops=[], ripples=[], bubbles=[];
-    let nextLeap=2.5, bearCycle=-1;
+    let nextLeap=2.5;
+    const bear = { hold:0, next:4 };
+    const fly = { n:28, px:[], py:[], ox:[], oy:[], len:0, init:false };
 
     // ── static layers, rebuilt on resize ──
     function buildTop(d) {
@@ -107,7 +115,7 @@ function OceanAnimation() {
     }
 
     function headland(x,left) {
-      const span=W*(left?0.3:0.26), x0=left?0:W-span, base=S+14*k;
+      const span=W*(left?0.3:0.19), x0=left?0:W-span, base=S+14*k;
       const hgt = px => { const e=left?1-(px-x0)/span:(px-x0)/span; const env=Math.pow(Math.max(0,Math.min(1,e)),0.75); return H*(0.11*env+0.03*env*headR(px/W*5+(left?0:3))); };
       const fir = (cx,by,h) => {
         for(let i=0;i<3;i++){ const ty=by-h+i*h*0.22, bb=by-h*0.5+i*h*0.22, hw=h*0.36*(0.5+i*0.25); poly(x,[[cx,ty],[cx+hw,bb],[cx-hw,bb]]); }
@@ -172,6 +180,7 @@ function OceanAnimation() {
       canvas.width=Math.ceil(W*d); canvas.height=Math.ceil(H*d); ctx.setTransform(d,0,0,d,0,0);
       buildTop(d); buildBottom(d); buildVignette(d); buildClouds(d);
       caus=layer(W,H*0.24,1);
+      fly.len=170*k; fly.init=false;
       if (still) draw(8);
     }
 
@@ -220,27 +229,85 @@ function OceanAnimation() {
       }
     }
 
+    function moveBoat(b,dt) {
+      const u=k*b.sc, L=HULL[b.kind].len*u, trail=(b.net?b.net.len*L:0)+L;
+      b.xf+=b.dir*b.sp*dt;
+      const x=b.xf*W;
+      if (b.dir>0 && x-trail>W) b.xf=-L/W;
+      if (b.dir<0 && x+trail<0) b.xf=1+L/W;
+    }
+
     function drawBoat(b,t) {
-      const x=b.xf*W, y=wave(x,t), u=1.15*k*b.sc;
-      const tilt=Math.atan2(wave(x+12,t)-wave(x-12,t),24)+Math.sin(t*0.9+b.ph)*0.025;
-      const side=Math.sign(x-sunX)||1;
+      const x=b.xf*W, y=wave(x,t), u=k*b.sc;
+      const tilt=Math.atan2(wave(x+12,t)-wave(x-12,t),24)+Math.sin(t*0.9+b.ph)*0.02;
+      const side=Math.sign(x-sunX)||1, seiner=b.kind==='seiner';
       ctx.save(); ctx.translate(x,y+2*u); ctx.rotate(tilt); ctx.scale(u*b.dir,u);
-      ctx.strokeStyle='rgba(230,235,240,0.35)'; ctx.lineWidth=0.7/u;
-      [[-38,-67],[37,-70]].forEach(([px,py],i)=>{ const sw=Math.sin(t*0.8+b.ph+i)*4; ctx.beginPath(); ctx.moveTo(px,py); ctx.quadraticCurveTo(px-10+sw,-10,px-26+sw,48+i*10); ctx.stroke(); });
-      rimFill(() => {
-        ctx.moveTo(-50,-8); ctx.lineTo(36,-10); ctx.quadraticCurveTo(46,-12,53,-19); ctx.lineTo(50,-8);
-        ctx.quadraticCurveTo(46,4,30,8); ctx.lineTo(-38,8); ctx.quadraticCurveTo(-48,6,-50,-8); ctx.closePath();
-        ctx.rect(-4,-27,26,18); ctx.rect(-7,-30,32,3.5);
-        ctx.rect(-46,-15,10,6); ctx.rect(-44,-30,2,16);
-        ctx.rect(12,-64,2.2,36); ctx.rect(4,-54,18,1.6);
-        poly(ctx,[[10,-34],[-38,-67],[-37,-68.5],[11,-36]]); poly(ctx,[[14,-36],[36,-70],[37.5,-69],[16,-34]]);
-      }, side*1.3*k/(u*b.dir), 1.3*k/u);
-      ctx.fillStyle=C.glass; [[-1,-23],[7,-23],[15,-23]].forEach(([wx,wy])=>ctx.fillRect(wx,wy,5,5));
+      const build = seiner ? () => {
+        ctx.moveTo(-58,-10); ctx.lineTo(40,-12); ctx.quadraticCurveTo(54,-14,62,-25); ctx.lineTo(58,-10);
+        ctx.quadraticCurveTo(54,6,36,10); ctx.lineTo(-46,10); ctx.quadraticCurveTo(-56,8,-58,-10); ctx.closePath();
+        ctx.rect(12,-38,34,27); ctx.rect(17,-49,24,12); ctx.rect(14,-51,30,3); ctx.rect(30,-61,1.4,11);
+        ctx.rect(5,-88,2.4,77);                                   // mast
+        poly(ctx,[[6,-74],[-50,-45],[-50,-42.5],[6,-71]]);        // boom
+        poly(ctx,[[-54,-44],[-46,-44],[-50,-33]]); el(ctx,-50,-35,3.4,3.4); // power block
+        ctx.moveTo(-57,-11); ctx.bezierCurveTo(-55,-23,-30,-25,-21,-11); ctx.closePath(); // net pile on the stern
+      } : () => {
+        ctx.moveTo(-45,-8); ctx.lineTo(30,-9); ctx.quadraticCurveTo(40,-11,47,-19); ctx.lineTo(43,-8);
+        ctx.quadraticCurveTo(40,4,26,7); ctx.lineTo(-38,7); ctx.quadraticCurveTo(-45,5,-45,-8); ctx.closePath();
+        ctx.rect(2,-30,26,22); ctx.rect(0,-32,30,3); ctx.rect(16,-52,2,21);
+        el(ctx,-33,-20,10,10); ctx.rect(-36,-11,6,4);              // net drum
+      };
+      if (b.far) { ctx.fillStyle=mix('#2a3550',C.haze,0.35); ctx.beginPath(); build(); ctx.fill(); }
+      else {
+        rimFill(build, side*1.3*k/(u*b.dir), 1.3*k/u);
+        ctx.strokeStyle='rgba(255,178,107,0.3)'; ctx.lineWidth=1.2;
+        if (seiner) { ctx.beginPath(); ctx.moveTo(-54,-15); ctx.quadraticCurveTo(-40,-21,-26,-14); ctx.stroke(); }
+        else { ctx.beginPath(); ctx.arc(-33,-20,6,0,TAU); ctx.stroke(); }
+      }
+      ctx.fillStyle=C.glass;
+      (seiner ? [[16,-33,6,5],[25,-33,6,5],[34,-33,6,5],[20,-46,6,4],[29,-46,6,4]] : [[5,-26,5,5],[12,-26,5,5],[19,-26,5,5]]).forEach(([wx,wy,ww,wh])=>ctx.fillRect(wx,wy,ww,wh));
       ctx.globalCompositeOperation='lighter';
-      let g=ctx.createRadialGradient(9,-20,0,9,-20,22); g.addColorStop(0,'rgba(255,190,110,0.28)'); g.addColorStop(1,'rgba(255,190,110,0)');
-      ctx.fillStyle=g; ctx.fillRect(-13,-42,44,44);
-      g=ctx.createRadialGradient(13,-65,0,13,-65,9); g.addColorStop(0,'rgba(255,230,170,0.95)'); g.addColorStop(1,'rgba(255,230,170,0)');
-      ctx.fillStyle=g; ctx.fillRect(4,-74,18,18);
+      const [gx,gy]=seiner?[28,-34]:[14,-22], [lx,ly]=seiner?[6,-89]:[17,-53];
+      let g=ctx.createRadialGradient(gx,gy,0,gx,gy,24); g.addColorStop(0,'rgba(255,190,110,0.28)'); g.addColorStop(1,'rgba(255,190,110,0)');
+      ctx.fillStyle=g; ctx.fillRect(gx-24,gy-24,48,48);
+      g=ctx.createRadialGradient(lx,ly,0,lx,ly,9); g.addColorStop(0,'rgba(255,230,170,0.95)'); g.addColorStop(1,'rgba(255,230,170,0)');
+      ctx.fillStyle=g; ctx.fillRect(lx-9,ly-9,18,18);
+      ctx.restore();
+    }
+
+    // net trails astern: float line on the surface, mesh curtain below with a lead line at the foot
+    function netSpan(b) {
+      const u=k*b.sc, h=HULL[b.kind], x0=b.xf*W-b.dir*h.stern*u, len=b.net.len*h.len*u;
+      return { x0, x1:x0-b.dir*len, a:Math.min(x0,x0-b.dir*len), z:Math.max(x0,x0-b.dir*len), depth:b.net.depth*u };
+    }
+    function drawNetCurtain(b,t) {
+      const n=netSpan(b), seiner=b.kind==='seiner';
+      const foot = x => { const f=Math.min(1,Math.max(0,(x-n.a)/(n.z-n.a))); return n.depth*Math.pow(Math.sin(Math.PI*f),seiner?0.5:0.25)*(0.94+0.06*Math.sin(t*0.7+x*0.02)); };
+      const sway = x => Math.sin(t*0.6+x*0.012)*7*k;
+      const edge = [];
+      for(let x=n.z;x>=n.a-0.1;x-=6){ const d=foot(x); edge.push([x+sway(x)*d/n.depth, wave(x,t)+1+d]); }
+      ctx.save(); ctx.beginPath(); ctx.moveTo(n.a,wave(n.a,t)+1);
+      for(let x=n.a;x<=n.z;x+=6) ctx.lineTo(x,wave(x,t)+1);
+      edge.forEach(([x,y])=>ctx.lineTo(x,y)); ctx.closePath();
+      ctx.fillStyle='rgba(190,225,235,0.07)'; ctx.fill(); ctx.clip();
+      const m=7*k*Math.max(0.7,b.sc), off=Math.sin(t*0.6)*4*k, d=n.depth;
+      ctx.strokeStyle='rgba(205,235,240,0.24)'; ctx.lineWidth=0.7; ctx.beginPath();
+      for(let x=n.a-d;x<=n.z+d;x+=m){ ctx.moveTo(x+off,S); ctx.lineTo(x+off+d*0.55,S+d*1.1); ctx.moveTo(x+off,S); ctx.lineTo(x+off-d*0.55,S+d*1.1); }
+      ctx.stroke(); ctx.restore();
+      ctx.strokeStyle='rgba(8,16,26,0.6)'; ctx.lineWidth=1.8*k; ctx.beginPath();
+      edge.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y)); ctx.stroke();
+    }
+    function drawFloats(b,t) {
+      const n=netSpan(b), step=10*k*Math.max(0.75,b.sc);
+      ctx.fillStyle='#f3a03c';
+      for(let x=n.a;x<=n.z;x+=step){ ctx.beginPath(); ctx.ellipse(x,wave(x,t)-0.5*k,2.6*k,1.7*k,0,0,TAU); ctx.fill(); }
+      if (b.kind!=='seiner') return;
+      // seine skiff holding the far end of the net
+      const sx=n.x1, u=k*b.sc, side=Math.sign(sx-sunX)||1;
+      ctx.save(); ctx.translate(sx,wave(sx,t)+1.5*u); ctx.rotate(Math.sin(t*1.2+b.ph)*0.04); ctx.scale(u*b.dir,u);
+      rimFill(() => {
+        ctx.moveTo(-14,-4); ctx.lineTo(10,-5); ctx.quadraticCurveTo(15,-6,17,-10); ctx.lineTo(15,-1); ctx.quadraticCurveTo(10,4,2,4); ctx.lineTo(-11,4); ctx.quadraticCurveTo(-14,2,-14,-4); ctx.closePath();
+        ctx.rect(-2,-12,7,8); ctx.rect(-17,-9,3,11);
+      }, side*1.2*k/(u*b.dir), 1.2*k/u);
       ctx.restore();
     }
 
@@ -261,56 +328,145 @@ function OceanAnimation() {
       ctx.restore();
     }
 
-    function drawBear(t) {
-      const bx=W*0.16, r0=74*k, u=54*k, gx=bx-0.08*r0, gy=S-0.61*r0;
-      const cyc=(t%7)/7, sw=cyc>0.72&&cyc<0.92 ? Math.sin((cyc-0.72)/0.2*Math.PI) : 0;
-      const look=Math.sin(t*0.5)*0.06+sw*0.2;
-      if (cyc>=0.7 && bearCycle!==Math.floor(t/7) && !still) {
-        bearCycle=Math.floor(t/7);
-        if (bearCycle%2===0) spawnLeap(bx+2.5*r0,-1,1.15*r0,0.95*r0);
-      }
+    // limb as a thick segment with a rounded joint, for silhouette figures
+    const limb = (a,b,w) => {
+      const dx=b[0]-a[0], dy=b[1]-a[1], d=Math.hypot(dx,dy)||1, nx=-dy/d*w/2, ny=dx/d*w/2;
+      poly(ctx,[[a[0]+nx,a[1]+ny],[b[0]+nx,b[1]+ny],[b[0]-nx,b[1]-ny],[a[0]-nx,a[1]-ny]]); el(ctx,b[0],b[1],w/2,w/2);
+    };
+
+    // ── grizzly on the left rock: watches the water, now and then snatches a leaping salmon ──
+    const HEAD = { x:52, y:-80, a:0.32 };
+    const bearGeom = () => { const bx=W*0.16, r0=74*k; return { bx, r0, s:0.56*k, gx:bx-0.05*r0, gy:S-0.61*r0 }; };
+    function bearSnout() {
+      const { s, gx, gy }=bearGeom(), a=HEAD.a;
+      return [gx+s*(HEAD.x+46*Math.cos(a)-8*Math.sin(a)), gy+s*(HEAD.y+46*Math.sin(a)+8*Math.cos(a))];
+    }
+    function drawBear(t,dt) {
+      const { bx, r0, s, gx, gy }=bearGeom();
       drawRock(bx,r0,false,-1.4*k);
+      if (!still) {
+        bear.hold=Math.max(0,bear.hold-dt); bear.next-=dt;
+        if (bear.next<=0 && bear.hold===0 && !leaps.some(l=>l.catch)) {
+          bear.next=9+Math.random()*6;
+          const [sx,sy]=bearSnout(), x0=bx+2.3*r0;
+          leaps.push({ x0, x1:sx, y1:sy, h:0.6*r0, dir:-1, age:0, dur:1.05, catch:true }); splash(x0);
+        }
+      }
+      const lift = bear.hold>0 ? Math.min(1,(3.5-bear.hold)/0.4,bear.hold/0.6)*0.5 : 0;
+      const ha = HEAD.a-lift+Math.sin(t*0.6)*0.03;
+      ctx.save(); ctx.translate(gx,gy); ctx.scale(s,s*(1+Math.sin(t*1.4)*0.01));
       rimFill(() => {
-        const leg=(x,w,top)=>ctx.roundRect(gx+(x-w/2)*u,gy+top*u,w*u,-top*u,w*u*0.4);
-        leg(-0.55,0.24,-0.5); leg(-0.36,0.22,-0.46); leg(0.36,0.22,-0.5);
-        ctx.save(); ctx.translate(gx+0.56*u,gy-0.5*u); ctx.rotate(-sw*1.1); ctx.roundRect(-0.12*u,0,0.24*u,0.5*u,0.09*u); ctx.restore();
-        el(ctx,gx,gy-0.62*u,0.72*u,0.3*u); el(ctx,gx-0.5*u,gy-0.68*u,0.3*u,0.3*u); el(ctx,gx+0.3*u,gy-0.8*u,0.34*u,0.25*u,-0.15);
-        ctx.save(); ctx.translate(gx+0.82*u,gy-0.66*u); ctx.rotate(0.35+look);
-        el(ctx,0.12*u,0,0.22*u,0.18*u); el(ctx,0.36*u,0.05*u,0.15*u,0.09*u,0.15);
-        el(ctx,0.02*u,-0.17*u,0.07*u,0.065*u); el(ctx,0.15*u,-0.18*u,0.065*u,0.06*u);
+        // body: rump, back, shoulder hump, chest, near legs
+        ctx.moveTo(-84,-10);
+        ctx.bezierCurveTo(-92,-40,-100,-70,-84,-88);
+        ctx.bezierCurveTo(-70,-102,-30,-100,-5,-104);
+        ctx.bezierCurveTo(10,-114,30,-116,42,-104);
+        ctx.bezierCurveTo(52,-96,58,-86,60,-76);
+        ctx.lineTo(56,-58);
+        ctx.bezierCurveTo(50,-50,44,-46,40,-40);
+        ctx.bezierCurveTo(38,-26,40,-12,44,-5);
+        ctx.bezierCurveTo(48,-2,56,-2,60,0);
+        ctx.lineTo(28,0);
+        ctx.bezierCurveTo(28,-14,26,-26,22,-34);
+        ctx.bezierCurveTo(0,-40,-30,-40,-50,-36);
+        ctx.bezierCurveTo(-48,-24,-46,-10,-42,-3);
+        ctx.lineTo(-40,0); ctx.lineTo(-74,0);
+        ctx.bezierCurveTo(-78,-3,-80,-6,-84,-10); ctx.closePath();
+        // far-side legs peeking between the near ones
+        poly(ctx,[[14,-38],[30,-40],[36,0],[16,0]]); poly(ctx,[[-62,-40],[-46,-40],[-52,0],[-66,0]]);
+        el(ctx,-92,-76,6,4.5);                                   // stubby tail
+        ctx.save(); ctx.translate(HEAD.x,HEAD.y); ctx.rotate(ha);
+        // head: broad skull, dished face, blunt muzzle
+        ctx.moveTo(-8,-16); ctx.bezierCurveTo(4,-25,20,-24,28,-16);
+        ctx.bezierCurveTo(34,-11,40,-8,48,-6);
+        ctx.bezierCurveTo(55,-4,58,3,53,8);
+        ctx.bezierCurveTo(45,12,36,12,28,12);
+        ctx.bezierCurveTo(18,15,6,15,-4,11);
+        ctx.bezierCurveTo(-12,5,-14,-8,-8,-16); ctx.closePath();
+        el(ctx,4,-21,7,6.5); el(ctx,15,-22,5.5,5);              // rounded ears
         ctx.restore();
-      }, -1.3*k, 1.3*k);
+      }, -1.3*k/s, 1.3*k/s);
+      ctx.save(); ctx.translate(HEAD.x,HEAD.y); ctx.rotate(ha);
+      ctx.fillStyle='rgba(255,190,120,0.55)'; ctx.beginPath(); ctx.arc(30,-9,1.6,0,TAU); ctx.fill(); // eye glint
+      if (bear.hold>0) drawFish(46,10,62,1,t*2.4,0,leapCol,1.2);
+      ctx.restore();
+      ctx.restore();
     }
 
-    function drawAngler(t) {
-      const ax=W*0.875, r0=58*k, u=42*k, gx=ax+0.1*r0, gy=S-0.6*r0;
+    // ── fly fisher on the right rock: false-casts every few seconds; the fly line is a verlet rope ──
+    const anglerGeom = () => { const ax=W*0.855, r0=58*k; return { ax, r0, s:0.4*k, gx:ax+0.1*r0, gy:S-0.6*r0 }; };
+    const ease = x => x<0?0:x>1?1:x*x*(3-2*x);
+    function castAngle(t) {
+      const c=t%8;
+      if (c<4.6) return -0.95+Math.sin(t*0.8)*0.03;
+      if (c<5.3) return lerp(-0.95,0.4,ease((c-4.6)/0.7));
+      if (c<5.6) return 0.4;
+      if (c<6.2) return lerp(0.4,-0.7,ease((c-5.6)/0.6));
+      return lerp(-0.7,-0.95,ease((c-6.2)/1.8));
+    }
+    function stepFly(tx,ty,dt,t) {
+      const n=fly.n, seg=fly.len/n, P=fly.px, Q=fly.py, OX=fly.ox, OY=fly.oy;
+      if (!fly.init) {
+        for(let i=0;i<=n;i++){ const x=tx-i*seg*0.85; P[i]=OX[i]=x; Q[i]=OY[i]=Math.min(ty+i*seg*0.55,wave(x,t)); }
+        fly.init=true;
+      }
+      const steps=Math.min(8,Math.max(1,Math.round(dt*120))), h=dt/steps, g=420*k;
+      for(let st=0;st<steps;st++){
+        P[0]=OX[0]=tx; Q[0]=OY[0]=ty;
+        for(let i=1;i<=n;i++){ const vx=(P[i]-OX[i])*0.992, vy=(Q[i]-OY[i])*0.992; OX[i]=P[i]; OY[i]=Q[i]; P[i]+=vx; Q[i]+=vy+g*h*h; }
+        for(let it=0;it<8;it++) for(let i=0;i<n;i++){
+          const dx=P[i+1]-P[i], dy=Q[i+1]-Q[i], d=Math.hypot(dx,dy)||1e-6, diff=(d-seg)/d;
+          if (i===0) { P[1]-=dx*diff; Q[1]-=dy*diff; }
+          else { P[i]+=dx*diff*0.5; Q[i]+=dy*diff*0.5; P[i+1]-=dx*diff*0.5; Q[i+1]-=dy*diff*0.5; }
+        }
+        for(let i=1;i<=n;i++){ const wy=wave(P[i],t); if (Q[i]>wy) { Q[i]=OY[i]=wy; OX[i]=P[i]-(P[i]-OX[i])*0.7; } }
+      }
+    }
+    function drawAngler(t,dt) {
+      const { ax, r0, s, gx, gy }=anglerGeom();
       drawRock(ax,r0,true,1.4*k);
-      const flex=Math.sin(t*1.3)*0.05, hx=gx-0.42*u, hy=gy-1.15*u, tipX=gx-1.6*u, tipY=gy-2.05*u+flex*u*3;
-      const bobX=gx-3.4*u, bobY=wave(bobX,t)-1.5*k+Math.sin(t*2.1)*1.2*k;
-      ctx.strokeStyle='rgba(240,240,240,0.45)'; ctx.lineWidth=0.7*k;
-      ctx.beginPath(); ctx.moveTo(tipX,tipY); ctx.quadraticCurveTo((tipX+bobX)/2,bobY-0.2*u,bobX,bobY); ctx.stroke();
-      ctx.fillStyle='#e4572e'; ctx.beginPath(); ctx.arc(bobX,bobY,2.4*k,0,TAU); ctx.fill();
+      const th=castAngle(t), f=(th+0.95)/1.35, bendRate=(th-castAngle(t-0.06))/0.06;
+      const hand=[lerp(-30,8,f),lerp(-122,-170,f)], elbow=[lerp(-8,20,f),lerp(-118,-142,f)];
+      const dir=[Math.sin(th),-Math.cos(th)], RL=250, tip=[hand[0]+dir[0]*RL,hand[1]+dir[1]*RL];
+      const bend=Math.max(-40,Math.min(40,-bendRate*14)), mid=[hand[0]+dir[0]*RL*0.55-dir[1]*bend, hand[1]+dir[1]*RL*0.55+dir[0]*bend];
+      ctx.save(); ctx.translate(gx,gy); ctx.scale(s,s);
       rimFill(() => {
-        ctx.roundRect(gx-0.12*u,gy-0.85*u,0.1*u,0.85*u,0.03*u); ctx.roundRect(gx+0.03*u,gy-0.85*u,0.1*u,0.85*u,0.03*u);
-        ctx.roundRect(gx-0.17*u,gy-1.47*u,0.34*u,0.7*u,0.12*u);
-        el(ctx,gx-0.02*u,gy-1.62*u,0.12*u,0.13*u);
-        ctx.roundRect(gx-0.26*u,gy-1.75*u,0.46*u,0.05*u,0.02*u); ctx.roundRect(gx-0.12*u,gy-1.88*u,0.24*u,0.16*u,0.05*u);
-        poly(ctx,[[gx-0.12*u,gy-1.4*u],[hx-0.02*u,hy-0.05*u],[hx+0.02*u,hy+0.05*u],[gx-0.06*u,gy-1.28*u]]);
-      }, 1.3*k, 1.3*k);
-      ctx.strokeStyle=C.sil; ctx.lineWidth=1.6*k; ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(hx+0.1*u,hy+0.08*u); ctx.quadraticCurveTo(gx-1.0*u,gy-1.75*u,tipX,tipY); ctx.stroke();
+        limb([-8,-96],[-17,-50],18); limb([-17,-50],[-13,-6],16);       // waders, knees soft
+        limb([8,-96],[11,-50],18); limb([11,-50],[15,-6],16);
+        ctx.roundRect(-30,-8,22,8,3); ctx.roundRect(2,-8,22,8,3);          // boots
+        poly(ctx,[[-18,-150],[17,-153],[21,-120],[18,-90],[-17,-90],[-21,-122]]); // vest
+        limb([16,-146],[27,-118],3.5);                                     // landing-net handle
+        ctx.rect(-5,-160,9,12); el(ctx,-3,-168,11,12.5); el(ctx,-13,-166,3,2.6);  // neck, head, nose
+        ctx.roundRect(-26,-180,44,4.5,2); poly(ctx,[[-13,-179],[10,-179],[8,-194],[-11,-194]]); // hat
+        limb([-10,-144],[-22,-118],10); limb([-22,-118],[-32,-112],9);    // line hand
+        limb([6,-146],elbow,11); limb(elbow,hand,10); el(ctx,hand[0],hand[1],5.5,5.5); // casting arm
+      }, 1.3*k/s, 1.3*k/s);
+      ctx.strokeStyle=C.sil; ctx.lineWidth=3; ctx.beginPath(); ctx.ellipse(30,-102,8,14,-0.25,0,TAU); ctx.stroke(); // net hoop
+      ctx.strokeStyle='rgba(15,22,38,0.55)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(24,-92); ctx.quadraticCurveTo(30,-78,36,-92); ctx.stroke();
+      ctx.strokeStyle=C.sil; ctx.lineCap='round'; ctx.lineWidth=3.2;
+      ctx.beginPath(); ctx.moveTo(hand[0]-dir[0]*16,hand[1]-dir[1]*16); ctx.quadraticCurveTo(mid[0],mid[1],tip[0],tip[1]); ctx.stroke();
+      ctx.restore();
+      const tx=gx+tip[0]*s, ty=gy+tip[1]*s;
+      if (!still || !fly.init) stepFly(tx,ty,dt,t);
+      ctx.strokeStyle='rgba(250,238,200,0.8)'; ctx.lineWidth=1*k; ctx.lineJoin='round';
+      ctx.beginPath(); ctx.moveTo(tx,ty);
+      for(let i=1;i<=fly.n;i++) ctx.lineTo(fly.px[i],fly.py[i]);
+      ctx.stroke();
+      // line hand to reel: a short slack loop
+      ctx.beginPath(); ctx.moveTo(gx-32*s,gy-112*s); ctx.quadraticCurveTo(gx-30*s,gy-80*s,gx+hand[0]*s,gy+hand[1]*s); ctx.stroke();
     }
 
     function splash(x) {
       ripples.push({ x, age:0 });
       for(let i=0;i<12;i++) drops.push({ x:x+(Math.random()-0.5)*10*k, y:S, vx:(Math.random()-0.5)*90*k, vy:-(80+Math.random()*120)*k });
     }
-    function spawnLeap(x0,dir,span,h) { leaps.push({ x0, dir, span, h, age:0, dur:1.15 }); splash(x0); }
+    function spawnLeap(x0,dir,span,h) { leaps.push({ x0, x1:x0+dir*span, y1:S, dir, h, age:0, dur:1.15 }); splash(x0); }
 
     function draw(t) {
       const dt=still?0:Math.min(0.05,Math.max(0,t-last)); last=t;
       ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
       ctx.drawImage(top,0,0,W,H);
+      boats.forEach(b=>moveBoat(b,dt));
 
       clouds.forEach((cl,i)=>{
         cl.xf+=cl.sp*dt; const sp=cloudSprites[i], span=W+sp.w;
@@ -366,6 +522,8 @@ function OceanAnimation() {
         sc.fish.forEach(f=>drawFish(cxp+f.dx*110*spread+Math.sin(t*0.5+f.ph)*10*k, cyp+f.dy*34*spread+Math.sin(t*0.8+f.ph*1.3)*5*k, L0*f.s, sc.dir, t*(1+sc.sp*20), f.ph, sc.col));
       });
 
+      boats.forEach(b=>{ if (b.net) drawNetCurtain(b,t); });
+
       if (!still && Math.random()<dt*1.4) { const x=Math.random()*W; bubbles.push({ x, y:bedY(x), r:(1+Math.random()*2.5)*k, ph:Math.random()*TAU }); }
       ctx.lineWidth=0.9*k; ctx.strokeStyle='rgba(220,245,255,0.55)';
       for(let i=bubbles.length-1;i>=0;i--){
@@ -388,13 +546,15 @@ function OceanAnimation() {
       }
       for(let i=leaps.length-1;i>=0;i--){
         const l=leaps[i]; l.age+=dt; const p=l.age/l.dur;
-        if (p>=1) { splash(l.x0+l.dir*l.span); leaps.splice(i,1); continue; }
-        drawFish(l.x0+l.dir*l.span*p, S-l.h*4*p*(1-p), 46*k, l.dir, t*1.6, 0, leapCol, Math.atan2(l.dir*-4*l.h*(1-2*p),l.span));
+        if (p>=1) { if (l.catch) bear.hold=3.5; else splash(l.x1); leaps.splice(i,1); continue; }
+        const dx=l.x1-l.x0, dy=(l.y1-S)-l.h*4*(1-2*p);
+        drawFish(lerp(l.x0,l.x1,p), lerp(S,l.y1,p)-l.h*4*p*(1-p), 46*k, l.dir, t*1.6, 0, leapCol, Math.atan2(l.dir*dy,l.dir*dx));
       }
 
-      boats.forEach(b=>{ b.xf+=b.dir*b.sp*dt; if(b.xf>1.15) b.xf=-0.15; if(b.xf<-0.15) b.xf=1.15; drawBoat(b,t); });
-      drawBear(t);
-      drawAngler(t);
+      boats.forEach(b=>{ if (b.net) drawFloats(b,t); });
+      boats.forEach(b=>drawBoat(b,t));
+      drawBear(t,dt);
+      drawAngler(t,dt);
 
       // ── water surface: film over submerged parts, highlight line, sun glitter ──
       ctx.save();

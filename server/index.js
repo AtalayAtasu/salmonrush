@@ -8,11 +8,17 @@ import { nanoid } from 'nanoid';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { mkdirSync } from 'fs';
+import { randomBytes, timingSafeEqual } from 'crypto';
 
 const PORT = Number(process.env.PORT || 8787);
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
-const ADMIN_PASSWORD = 'zico7982'; // master admin — bypasses instructor table
-const SUPERADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD || 'supersalmon2026';
+// Secrets come only from the environment. A missing password disables that login instead of falling back to a default.
+const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex'); // random fallback: tokens just expire on restart
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ''; // master admin — bypasses instructor table
+const SUPERADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD || '';
+if(!process.env.JWT_SECRET) console.warn('JWT_SECRET not set — using a random secret; logins reset on restart');
+if(!ADMIN_PASSWORD) console.warn('ADMIN_PASSWORD not set — master admin login disabled');
+if(!SUPERADMIN_PASSWORD) console.warn('SUPERADMIN_PASSWORD not set — super-admin login disabled');
+function passwordMatches(given,expected){ if(!expected) return false; const a=Buffer.from(String(given??'')), b=Buffer.from(expected); return a.length===b.length&&timingSafeEqual(a,b); }
 const TEAM_PASSWORDS = ['lugano','anelka','alex','deivid','anderson','kante','kocaman','guendouzi','aurelio','asencio'];
 const TEAM_NAMES = ['Group 1','Group 2','Group 3','Group 4','Group 5','Group 6','Group 7','Group 8','Group 9','Group 10'];
 const DB_PATH = process.env.DATABASE_PATH || './salmonrush.sqlite';
@@ -223,12 +229,12 @@ function doCloseDeployment(gameId){
 }
 
 // ── Public state ────────────────────────────────────────────────────────────
-app.post('/api/instances',(req,res)=>{ if(req.body.password!==ADMIN_PASSWORD) return res.status(401).json({error:'Admin password required'}); const code=String(req.body.code||'CLASS1').toUpperCase(); const name=req.body.name||code; let g=gameByCode(code); if(g) return res.json({id:g.id,code:g.code}); const id=nanoid(); db.prepare('INSERT INTO games(id,code,name,phase,currentYear,coastalFishStock,deepSeaFishStock,shipValue,phaseEndsAt,createdAt) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,code,name,'SETUP',1,SETTINGS.coastalInitial,SETTINGS.deepInitial,300,null,nowIso()); const ins=db.prepare('INSERT INTO teams VALUES(?,?,?,?,?,?,?)'); for(let i=1;i<=10;i++) ins.run(nanoid(),id,i,TEAM_NAMES[i-1],SETTINGS.initialShips,SETTINGS.initialCash,SETTINGS.initialShips*300+SETTINGS.initialCash); res.json({id,code}); });
+app.post('/api/instances',(req,res)=>{ if(!passwordMatches(req.body.password,ADMIN_PASSWORD)) return res.status(401).json({error:'Admin password required'}); const code=String(req.body.code||'CLASS1').toUpperCase(); const name=req.body.name||code; let g=gameByCode(code); if(g) return res.json({id:g.id,code:g.code}); const id=nanoid(); db.prepare('INSERT INTO games(id,code,name,phase,currentYear,coastalFishStock,deepSeaFishStock,shipValue,phaseEndsAt,createdAt) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,code,name,'SETUP',1,SETTINGS.coastalInitial,SETTINGS.deepInitial,300,null,nowIso()); const ins=db.prepare('INSERT INTO teams VALUES(?,?,?,?,?,?,?)'); for(let i=1;i<=10;i++) ins.run(nanoid(),id,i,TEAM_NAMES[i-1],SETTINGS.initialShips,SETTINGS.initialCash,SETTINGS.initialShips*300+SETTINGS.initialCash); res.json({id,code}); });
 app.post('/api/login',(req,res)=>{
   const role=req.body.role;
   // Super-admin login — no game instance needed
   if(role==='superadmin'){
-    if(req.body.password!==SUPERADMIN_PASSWORD) return res.status(401).json({error:'Bad password'});
+    if(!passwordMatches(req.body.password,SUPERADMIN_PASSWORD)) return res.status(401).json({error:'Bad password'});
     return res.json({token:sign({role:'superadmin'})});
   }
   const g=gameByCode(String(req.body.instanceCode||'').toUpperCase());
@@ -245,7 +251,7 @@ app.post('/api/login',(req,res)=>{
       return res.json({token:sign({role:'admin',gameId:g.id})});
     }
     // Fall back to master admin password (no username supplied)
-    if(req.body.password!==ADMIN_PASSWORD) return res.status(401).json({error:'Bad password'});
+    if(!passwordMatches(req.body.password,ADMIN_PASSWORD)) return res.status(401).json({error:'Bad password'});
     return res.json({token:sign({role:'admin',gameId:g.id})});
   }
   const n=Number(String(role||'').split('-')[1]);
